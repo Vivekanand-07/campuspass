@@ -115,7 +115,10 @@ export default function MyRegistrationsPage() {
               ),
             };
           })
-          .filter((ticket): ticket is Event => ticket !== null)
+          .filter(
+            (ticket): ticket is Event =>
+              ticket !== null && new Date(ticket.starts_at).getTime() >= Date.now()
+          )
           .sort(
             (a, b) =>
               new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime()
@@ -260,7 +263,7 @@ export default function MyRegistrationsPage() {
               🎟️
             </div>
 
-            <h2 className="text-xl font-bold">No registrations yet</h2>
+            <h2 className="text-xl font-bold">No upcoming registrations</h2>
 
             <p className="mx-auto mt-2 max-w-md text-slate-600">
               Explore campus events and register for the ones you like.

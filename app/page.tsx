@@ -197,7 +197,13 @@ export default function Home() {
           "We couldn't load events right now. Please refresh and try again."
         );
       } else {
-        setEvents((data ?? []) as CampusEvent[]);
+        // Only show events that have not ended yet. Past event records remain in Supabase.
+        const now = Date.now();
+        setEvents(
+          ((data ?? []) as CampusEvent[]).filter(
+            (event) => new Date(event.starts_at).getTime() >= now
+          )
+        );
       }
 
       setLoading(false);
