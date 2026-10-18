@@ -193,24 +193,24 @@ export default function MyRegistrationsPage() {
   }, [ticketToPrint]);
 
   return (
-    <main data-theme={theme} className="campuspass-registrations min-h-screen bg-[#f7f6fb] text-slate-900">
+    <main data-theme={theme} className="campuspass-registrations min-h-screen w-full overflow-x-hidden bg-[#f7f6fb] text-slate-900">
       <header className="border-b border-slate-200 bg-white/90 print:hidden">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-5">
-          <Link href="/" className="text-2xl font-black tracking-tight">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5 sm:py-5">
+          <Link href="/" className="w-fit text-2xl font-black tracking-tight">
             Campus<span className="text-violet-600">Pass</span>
           </Link>
 
-          <div className="flex items-center gap-3">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3">
             <Link
               href="/"
-              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold transition hover:bg-slate-100"
+              className="min-h-11 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-center text-sm font-semibold transition hover:bg-slate-100 sm:flex-none sm:px-4"
             >
               Browse events
             </Link>
 
             <button
               onClick={handleSignOut}
-              className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-violet-100"
+              className="min-h-11 flex-1 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-violet-100 sm:flex-none sm:px-4"
             >
               Sign out
             </button>
@@ -218,13 +218,13 @@ export default function MyRegistrationsPage() {
         </div>
       </header>
 
-      <section className="mx-auto max-w-6xl px-5 py-12">
-        <div className="mb-8 print:hidden">
+      <section className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-5 sm:py-12">
+        <div className="mb-6 sm:mb-8 print:hidden">
           <p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-violet-600">
             Your CampusPass account
           </p>
 
-          <h1 className="text-3xl font-black tracking-tight sm:text-5xl">
+          <h1 className="break-words text-3xl font-black tracking-tight sm:text-5xl">
             My Registrations
           </h1>
 
@@ -276,58 +276,58 @@ export default function MyRegistrationsPage() {
           </div>
         ) : (
           <>
-            <div className="mb-5 flex items-center justify-between gap-4 print:hidden">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 print:hidden">
               <h2 className="text-lg font-bold">Your event tickets</h2>
               <span className="rounded-full bg-violet-100 px-3 py-1 text-sm font-semibold text-violet-700">
                 {events.reduce((total, event) => total + event.ticketQuantity, 0)} {events.reduce((total, event) => total + event.ticketQuantity, 0) === 1 ? "ticket" : "tickets"}
               </span>
             </div>
 
-            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3 print:block">
+            <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3 print:block">
               {events.map((event) => (
                 <article
                   key={event.ticketId}
                   data-ticket-id={event.ticketId}
                   data-print-selected={ticketToPrint === event.ticketId ? "true" : "false"}
-                  className="campuspass-ticket flex flex-col overflow-hidden rounded-2xl border border-violet-200 bg-white shadow-lg shadow-slate-200/70 print:mb-6 print:break-inside-avoid print:border-black print:bg-white print:text-black print:shadow-none"
+                  className="campuspass-ticket flex min-w-0 flex-col overflow-hidden rounded-2xl border border-violet-200 bg-white shadow-lg shadow-slate-200/70 print:mb-6 print:break-inside-avoid print:border-black print:bg-white print:text-black print:shadow-none"
                 >
-                  <div className="flex items-center justify-between gap-3 border-b border-dashed border-slate-200 bg-violet-100 px-5 py-4 print:border-black/30 print:bg-white">
-                    <span className="text-xs font-black uppercase tracking-[0.18em] text-violet-700 print:text-black">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-dashed border-slate-200 bg-violet-100 px-4 py-4 sm:px-5 print:border-black/30 print:bg-white">
+                    <span className="min-w-0 max-w-[65%] break-words text-xs font-black uppercase tracking-[0.14em] text-violet-700 sm:tracking-[0.18em] print:text-black">
                       CampusPass · Digital Ticket
                     </span>
-                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700 print:border print:border-black print:bg-white print:text-black">
+                    <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700 print:border print:border-black print:bg-white print:text-black">
                       ✓ Registered
                     </span>
                   </div>
 
-                  <div className="flex flex-1 flex-col p-5">
+                  <div className="flex min-w-0 flex-1 flex-col p-4 sm:p-5">
                     <span className="mb-3 w-fit rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-slate-700 print:border print:border-black/20 print:bg-white print:text-black">
                       {event.category || "Campus event"}
                     </span>
 
-                    <h3 className="text-2xl font-black leading-tight print:text-black">
+                    <h3 className="break-words text-xl font-black leading-tight sm:text-2xl print:text-black">
                       {event.title}
                     </h3>
 
-                    <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-600 print:text-black">
+                    <p className="mt-3 break-words text-sm leading-6 text-slate-600 sm:line-clamp-3 print:text-black">
                       {event.description || "No event description provided."}
                     </p>
 
-                    <div className="mt-5 space-y-3 text-sm text-slate-700 print:text-black">
+                    <div className="mt-5 space-y-3 break-words text-sm text-slate-700 print:text-black">
                       <p><span className="mr-2">📅</span>{formatDate(event.starts_at)}</p>
                       <p><span className="mr-2">📍</span>{event.venue || "Venue to be announced"}</p>
                     </div>
 
-                    <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 print:border-black print:bg-white">
-                      <p className="text-lg font-black text-emerald-800 print:text-black">🎟️ {event.ticketQuantity} {event.ticketQuantity === 1 ? "Ticket" : "Tickets"} Booked</p>
+                    <div className="mt-5 min-w-0 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 sm:px-4 print:border-black print:bg-white">
+                      <p className="break-words text-base font-black text-emerald-800 sm:text-lg print:text-black">🎟️ {event.ticketQuantity} {event.ticketQuantity === 1 ? "Ticket" : "Tickets"} Booked</p>
                       <p className="mt-1 text-xs text-emerald-700 print:text-black">This booking quantity is linked to your registration record.</p>
                     </div>
 
-                    <div className="mt-4 rounded-xl border border-dashed border-violet-300 bg-violet-50 p-4 print:border-black print:bg-white">
+                    <div className="mt-4 min-w-0 rounded-xl border border-dashed border-violet-300 bg-violet-50 p-3 sm:p-4 print:border-black print:bg-white">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-600 print:text-black">
                         Unique booking / ticket ID
                       </p>
-                      <p className="mt-2 break-all font-mono text-sm font-bold tracking-wide text-violet-700 print:text-black">
+                      <p className="mt-2 break-all font-mono text-xs font-bold tracking-normal text-violet-700 sm:text-sm sm:tracking-wide print:text-black">
                         {formatTicketId(event.ticketId)}
                       </p>
                       <p className="mt-2 text-xs text-slate-500 print:text-black">
@@ -338,7 +338,7 @@ export default function MyRegistrationsPage() {
                     <button
                       type="button"
                       onClick={() => printTicket(event.ticketId)}
-                      className="mt-5 rounded-xl bg-violet-500 px-4 py-3 text-center text-sm font-bold text-slate-950 transition hover:bg-violet-600 print:hidden"
+                      className="mt-5 min-h-12 w-full rounded-xl bg-violet-500 px-4 py-3 text-center text-sm font-bold text-slate-950 transition hover:bg-violet-600 print:hidden"
                     >
                       🖨️ View / Print ticket
                     </button>
