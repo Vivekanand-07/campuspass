@@ -12,6 +12,7 @@ type CampusEvent = {
   category: string;
   venue: string;
   starts_at: string;
+  ends_at: string | null;
   organizer_id: string | null;
   status: string;
   created_at: string;
@@ -184,7 +185,7 @@ export default function Home() {
       const { data, error } = await supabase
         .from("events")
         .select(
-          "id, title, description, category, venue, starts_at, organizer_id, status, created_at, group_booking_enabled, max_tickets_per_booking"
+          "id, title, description, category, venue, starts_at, ends_at, organizer_id, status, created_at, group_booking_enabled, max_tickets_per_booking"
         )
         .eq("status", "published")
         .order("starts_at", { ascending: true });
@@ -197,12 +198,16 @@ export default function Home() {
           "We couldn't load events right now. Please refresh and try again."
         );
       } else {
-        // Only show events that have not ended yet. Past event records remain in Supabase.
+        // Hide completed events based on ends_at. Rows without an end time
+        // fall back to starts_at so they won't remain visible forever.
         const now = Date.now();
         setEvents(
-          ((data ?? []) as CampusEvent[]).filter(
-            (event) => new Date(event.starts_at).getTime() >= now
-          )
+          ((data ?? []) as CampusEvent[]).filter((event) => {
+            const expiryTime = event.ends_at
+              ? new Date(event.ends_at).getTime()
+              : new Date(event.starts_at).getTime();
+            return Number.isFinite(expiryTime) && expiryTime > now;
+          })
         );
       }
 
@@ -259,6 +264,19 @@ export default function Home() {
 
     if (!userId) {
       router.push("/login");
+      return;
+    }
+
+    // Client-side safeguard: don't start a booking after the event has ended.
+    const expiryTime = selectedEvent.ends_at
+      ? new Date(selectedEvent.ends_at).getTime()
+      : new Date(selectedEvent.starts_at).getTime();
+
+    if (!Number.isFinite(expiryTime) || expiryTime <= Date.now()) {
+      setRegistrationError(true);
+      setRegistrationMessage("This event has ended and is no longer available for booking.");
+      setEvents((previous) => previous.filter((event) => event.id !== selectedEvent.id));
+      setSelectedEvent(null);
       return;
     }
 

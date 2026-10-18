@@ -12,6 +12,7 @@ type Event = {
   category: string | null;
   venue: string | null;
   starts_at: string;
+  ends_at: string | null;
   ticketId: string;
   ticketQuantity: number;
 };
@@ -85,7 +86,7 @@ export default function MyRegistrationsPage() {
 
       const { data: registeredEvents, error: eventsError } = await supabase
         .from("events")
-        .select("id, title, description, category, venue, starts_at")
+        .select("id, title, description, category, venue, starts_at, ends_at")
         .in("id", eventIds);
 
       if (!active) return;
@@ -115,10 +116,13 @@ export default function MyRegistrationsPage() {
               ),
             };
           })
-          .filter(
-            (ticket): ticket is Event =>
-              ticket !== null && new Date(ticket.starts_at).getTime() >= Date.now()
-          )
+          .filter((ticket): ticket is Event => {
+            if (!ticket) return false;
+            const expiryTime = ticket.ends_at
+              ? new Date(ticket.ends_at).getTime()
+              : new Date(ticket.starts_at).getTime();
+            return Number.isFinite(expiryTime) && expiryTime > Date.now();
+          })
           .sort(
             (a, b) =>
               new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime()
