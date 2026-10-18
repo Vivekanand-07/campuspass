@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
-import { QRCodeSVG } from "qrcode.react";
 
 type Event = {
   id: string;
@@ -322,23 +321,6 @@ export default function MyRegistrationsPage() {
                     <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 print:border-black print:bg-white">
                       <p className="text-lg font-black text-emerald-800 print:text-black">🎟️ {event.ticketQuantity} {event.ticketQuantity === 1 ? "Ticket" : "Tickets"} Booked</p>
                       <p className="mt-1 text-xs text-emerald-700 print:text-black">This booking quantity is linked to your registration record.</p>
-                    </div>
-
-                    <div className="mt-4 flex items-center gap-4 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4 print:border-black print:bg-white">
-                      <div className="shrink-0 rounded-xl bg-white p-2 shadow-lg shadow-violet-100">
-                        <QRCodeSVG
-                          value={`${typeof window !== "undefined" ? window.location.origin.replace("localhost", "10.202.14.50").replace("127.0.0.1", "10.202.14.50") : ""}/ticket/${encodeURIComponent(event.ticketId)}?eventId=${encodeURIComponent(event.id)}&ticketQuantity=${event.ticketQuantity}`}
-                          size={104}
-                          level="M"
-                          includeMargin
-                          title={`QR code for ${event.title}`}
-                        />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-black uppercase tracking-[0.16em] text-violet-700 print:text-black">Scan-ready ticket</p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900 print:text-black">Your booking, in one code.</p>
-                        <p className="mt-1 text-xs leading-5 text-slate-600 print:text-black">Includes your booking reference and ticket quantity for event check-in.</p>
-                      </div>
                     </div>
 
                     <div className="mt-4 rounded-xl border border-dashed border-violet-300 bg-violet-50 p-4 print:border-black print:bg-white">
