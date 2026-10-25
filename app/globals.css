@@ -3481,13 +3481,3 @@ html[data-theme="light"] section.booking-modal .modal-reserve:hover {
   }
 
 }
-
-'''
-
-path = Path("/mnt/data/globals.css")
-
-path.write_text(css, encoding="utf-8")
-
-print(f"Created complete updated CSS: {path}")
-
-print(f"Size: {path.stat().st_size:,} bytes")
