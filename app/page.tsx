@@ -565,7 +565,11 @@ export default function Home() {
             position: "relative",
           }}
         >
-          <div ref={settingsContainerRef} style={{ position: "relative" }}>
+          <div
+            ref={settingsContainerRef}
+            className="settings-container"
+            style={{ position: "relative" }}
+          >
             <button
               type="button"
               className="settings-trigger"
@@ -588,7 +592,7 @@ export default function Home() {
                 style={{
                   position: "absolute",
                   top: "calc(100% + 12px)",
-                  right: 0,
+                  right: "clamp(-80px, 0px, 0px)",
                   zIndex: 9999,
                   width: "min(320px, calc(100vw - 28px))",
                   boxSizing: "border-box",
@@ -1019,7 +1023,16 @@ export default function Home() {
             </Link>
           </div>
 
-          <div className="hero-note">
+          <div
+            className="hero-note"
+            style={{
+              fontSize: "clamp(12px, 2.5vw, 15px)",
+              lineHeight: 1.5,
+              marginTop: 20,
+              maxWidth: "100%",
+              overflowWrap: "anywhere",
+            }}
+          >
             <span>✳</span> Made for campus memories.
           </div>
         </div>

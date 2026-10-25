@@ -37,7 +37,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Read and validate the access token sent by the browser.
+    // Authenticate the student.
     const authorization = request.headers.get("authorization");
     const tokenMatch = authorization?.match(/^Bearer\s+(.+)$/i);
     const accessToken = tokenMatch?.[1];
@@ -49,7 +49,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // This client is scoped to the user's access token.
     const supabase = createSupabaseClient(
       supabaseUrl,
       supabasePublishableKey,
@@ -102,7 +101,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify the event using the authenticated user.
+    // Verify the published event.
     const { data: event, error: eventError } = await supabase
       .from("events")
       .select("id, title, status, ends_at, payment_type, ticket_price")
@@ -156,7 +155,12 @@ export async function POST(request: Request) {
       );
     }
 
+    // Calculate the total booking amount.
     const amount = Number((ticketPrice * quantity).toFixed(2));
+
+    // Calculate the platform's 2% commission.
+    const platformFee = Number((amount * 0.02).toFixed(2));
+
     const amountInPaise = Math.round(amount * 100);
 
     if (
@@ -187,7 +191,7 @@ export async function POST(request: Request) {
       user.user_metadata?.name ||
       "CampusPass Student";
 
-    // Create the order in Cashfree Sandbox.
+    // Create the Cashfree Sandbox order.
     const cashfreeResponse = await cashfree.PGCreateOrder({
       order_id: orderId,
       order_amount: amount,
@@ -218,7 +222,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Save a pending payment record before returning checkout details.
+    // Save the pending payment and platform commission.
     const { error: saveError } = await adminSupabase
       .from("payment_orders")
       .insert({
@@ -228,6 +232,7 @@ export async function POST(request: Request) {
         event_id: event.id,
         ticket_quantity: quantity,
         amount,
+        platform_fee: platformFee,
         currency: "INR",
         status: "pending",
       });
