@@ -1,6 +1,4 @@
-from pathlib import Path
-
-css = r'''@import "tailwindcss";
+@import "tailwindcss";
 
 /* =========================================================
 
