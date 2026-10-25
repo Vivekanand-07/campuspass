@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { load } from "@cashfreepayments/cashfree-js";
 import { supabase } from "./lib/supabase";
 
 type CampusEvent = {
@@ -18,6 +19,8 @@ type CampusEvent = {
   created_at: string;
   group_booking_enabled: boolean;
   max_tickets_per_booking: number;
+  payment_type: "free" | "paid";
+  ticket_price: number | string;
 };
 
 const categoryColors: Record<string, string> = {
@@ -55,6 +58,20 @@ function formatDate(dateString: string) {
   };
 }
 
+function formatPrice(price: number | string | null | undefined) {
+  const amount = Number(price ?? 0);
+
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(amount) ? amount : 0);
+}
+
+function isPaidEvent(event: CampusEvent) {
+  return event.payment_type === "paid" && Number(event.ticket_price) > 0;
+}
+
 function getInitials(email: string) {
   const name = email.split("@")[0];
   const parts = name.split(/[._-]+/).filter(Boolean);
@@ -84,6 +101,7 @@ export default function Home() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsContainerRef = useRef<HTMLDivElement>(null);
+  const profileContainerRef = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [signingOut, setSigningOut] = useState(false);
 
@@ -94,22 +112,22 @@ export default function Home() {
     useState<string[]>([]);
   const [ticketQuantity, setTicketQuantity] = useState(1);
 
-  // Restore the saved appearance preference and apply it to the whole site.
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("campuspass-theme");
     const initialTheme = savedTheme === "light" ? "light" : "dark";
+
     setTheme(initialTheme);
     document.documentElement.dataset.theme = initialTheme;
   }, []);
 
   function toggleTheme() {
     const nextTheme = theme === "dark" ? "light" : "dark";
+
     setTheme(nextTheme);
     document.documentElement.dataset.theme = nextTheme;
     window.localStorage.setItem("campuspass-theme", nextTheme);
   }
 
-  // Close menus when the user clicks outside them or presses Escape.
   useEffect(() => {
     if (!settingsOpen && !profileOpen) return;
 
@@ -118,6 +136,8 @@ export default function Home() {
       if (!(target instanceof Node)) return;
 
       if (settingsContainerRef.current?.contains(target)) return;
+      if (profileContainerRef.current?.contains(target)) return;
+
       setSettingsOpen(false);
       setProfileOpen(false);
     }
@@ -138,7 +158,6 @@ export default function Home() {
     };
   }, [settingsOpen, profileOpen]);
 
-  // Load signed-in user and listen for authentication changes.
   useEffect(() => {
     let mounted = true;
 
@@ -156,7 +175,7 @@ export default function Home() {
       setUserId(data.session?.user.id ?? null);
     }
 
-    loadUser();
+    void loadUser();
 
     const {
       data: { subscription },
@@ -174,7 +193,6 @@ export default function Home() {
     };
   }, []);
 
-  // Load published events.
   useEffect(() => {
     let cancelled = false;
 
@@ -185,7 +203,7 @@ export default function Home() {
       const { data, error } = await supabase
         .from("events")
         .select(
-          "id, title, description, category, venue, starts_at, ends_at, organizer_id, status, created_at, group_booking_enabled, max_tickets_per_booking"
+          "id, title, description, category, venue, starts_at, ends_at, organizer_id, status, created_at, group_booking_enabled, max_tickets_per_booking, payment_type, ticket_price"
         )
         .eq("status", "published")
         .order("starts_at", { ascending: true });
@@ -198,14 +216,14 @@ export default function Home() {
           "We couldn't load events right now. Please refresh and try again."
         );
       } else {
-        // Hide completed events based on ends_at. Rows without an end time
-        // fall back to starts_at so they won't remain visible forever.
         const now = Date.now();
+
         setEvents(
           ((data ?? []) as CampusEvent[]).filter((event) => {
             const expiryTime = event.ends_at
               ? new Date(event.ends_at).getTime()
               : new Date(event.starts_at).getTime();
+
             return Number.isFinite(expiryTime) && expiryTime > now;
           })
         );
@@ -214,14 +232,47 @@ export default function Home() {
       setLoading(false);
     }
 
-    loadEvents();
+    void loadEvents();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Load the signed-in student's existing registrations.
+  useEffect(() => {
+    const hideExpiredEvents = () => {
+      const now = Date.now();
+
+      setEvents((currentEvents) =>
+        currentEvents.filter((event) => {
+          const expiryTime = event.ends_at
+            ? new Date(event.ends_at).getTime()
+            : new Date(event.starts_at).getTime();
+
+          return Number.isFinite(expiryTime) && expiryTime > now;
+        })
+      );
+
+      setSelectedEvent((currentEvent) => {
+        if (!currentEvent) return null;
+
+        const expiryTime = currentEvent.ends_at
+          ? new Date(currentEvent.ends_at).getTime()
+          : new Date(currentEvent.starts_at).getTime();
+
+        return Number.isFinite(expiryTime) && expiryTime > now
+          ? currentEvent
+          : null;
+      });
+    };
+
+    hideExpiredEvents();
+
+    const intervalId = window.setInterval(hideExpiredEvents, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -248,14 +299,13 @@ export default function Home() {
       );
     }
 
-    loadRegistrations();
+    void loadRegistrations();
 
     return () => {
       cancelled = true;
     };
   }, [userId]);
 
-  // Every published event uses the quantity-only booking flow.
   async function handleRegister() {
     if (!selectedEvent || registering) return;
 
@@ -267,21 +317,21 @@ export default function Home() {
       return;
     }
 
-    // Client-side safeguard: don't start a booking after the event has ended.
     const expiryTime = selectedEvent.ends_at
       ? new Date(selectedEvent.ends_at).getTime()
       : new Date(selectedEvent.starts_at).getTime();
 
     if (!Number.isFinite(expiryTime) || expiryTime <= Date.now()) {
       setRegistrationError(true);
-      setRegistrationMessage("This event has ended and is no longer available for booking.");
-      setEvents((previous) => previous.filter((event) => event.id !== selectedEvent.id));
-      setSelectedEvent(null);
-      return;
-    }
+      setRegistrationMessage(
+        "This event has ended and is no longer available for booking."
+      );
 
-    if (registeredEventIds.includes(selectedEvent.id)) {
-      setRegistrationMessage("🎉 Congratulations! You’re already registered for this event.");
+      setEvents((previous) =>
+        previous.filter((event) => event.id !== selectedEvent.id)
+      );
+
+      setSelectedEvent(null);
       return;
     }
 
@@ -290,6 +340,84 @@ export default function Home() {
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 5) {
       setRegistrationError(true);
       setRegistrationMessage("Choose between 1 and 5 tickets.");
+      return;
+    }
+
+    // Paid events use Cashfree checkout, never the free-event RPC.
+    if (isPaidEvent(selectedEvent)) {
+      setRegistering(true);
+
+      try {
+        // Get the current authenticated Supabase session.
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError || !session?.access_token) {
+          throw new Error(
+            "Your login session could not be verified. Please sign in again."
+          );
+        }
+
+        // Send the access token to the protected backend route.
+        const response = await fetch("/api/payments/create-order", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            eventId: selectedEvent.id,
+            quantity,
+          }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Could not create your payment order."
+          );
+        }
+
+        if (!result.paymentSessionId) {
+          throw new Error("Cashfree did not return a payment session.");
+        }
+
+        const cashfree = await load({ mode: "sandbox" });
+
+        if (!cashfree) {
+          throw new Error("Could not initialize Cashfree checkout.");
+        }
+
+        setRegistrationMessage("Opening secure Cashfree checkout...");
+
+        await cashfree.checkout({
+          paymentSessionId: result.paymentSessionId,
+          redirectTarget: "_self",
+        });
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "An unexpected payment error occurred.";
+
+        console.error("Cashfree checkout failed:", error);
+        setRegistrationError(true);
+        setRegistrationMessage(message);
+      } finally {
+        setRegistering(false);
+      }
+
+      return;
+    }
+
+    // Existing free-event registration remains unchanged.
+    if (registeredEventIds.includes(selectedEvent.id)) {
+      setRegistrationMessage(
+        "🎉 Congratulations! You’re already registered for this event."
+      );
       return;
     }
 
@@ -310,6 +438,7 @@ export default function Home() {
               ? previous
               : [...previous, selectedEvent.id]
           );
+
           setRegistrationMessage(
             "🎉 Congratulations! You’re already registered for this event."
           );
@@ -353,12 +482,7 @@ export default function Home() {
   function changeTicketQuantity(nextQuantity: number) {
     if (!selectedEvent) return;
 
-    const maximum = 5;
-
-    const safeQuantity = Math.max(
-      1,
-      Math.min(maximum, nextQuantity)
-    );
+    const safeQuantity = Math.max(1, Math.min(5, nextQuantity));
 
     setTicketQuantity(safeQuantity);
     setRegistrationMessage("");
@@ -366,25 +490,38 @@ export default function Home() {
   }
 
   async function handleSignOut() {
+    if (signingOut) return;
+
     setSigningOut(true);
-
-    const { error } = await supabase.auth.signOut();
-
-    if (error) {
-      console.error("Sign out failed:", error.message);
-      setSigningOut(false);
-      return;
-    }
-
     setProfileOpen(false);
-    setUserEmail(null);
-    setUserId(null);
-    setRegisteredEventIds([]);
+    setSettingsOpen(false);
 
-    router.refresh();
-    router.push("/");
+    try {
+      const { error } = await supabase.auth.signOut();
 
-    setSigningOut(false);
+      if (error) {
+        console.error("Sign out failed:", error.message);
+        window.alert(`Could not sign out: ${error.message}`);
+        return;
+      }
+
+      setUserEmail(null);
+      setUserId(null);
+      setRegisteredEventIds([]);
+
+      router.refresh();
+      router.push("/");
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred.";
+
+      console.error("Unexpected sign-out error:", error);
+      window.alert(`Could not sign out: ${message}`);
+    } finally {
+      setSigningOut(false);
+    }
   }
 
   const categories = [
@@ -439,8 +576,10 @@ export default function Home() {
               aria-label="Open settings"
               aria-expanded={settingsOpen}
             >
-              <span aria-hidden="true">⚙</span> <span className="settings-label">Settings</span>
+              <span aria-hidden="true">⚙</span>{" "}
+              <span className="settings-label">Settings</span>
             </button>
+
             {settingsOpen && (
               <div
                 className="settings-menu"
@@ -454,69 +593,211 @@ export default function Home() {
                   width: "min(320px, calc(100vw - 28px))",
                   boxSizing: "border-box",
                   padding: 18,
-                  border: `1px solid ${theme === "dark" ? "rgba(169,155,255,.34)" : "rgba(70,55,130,.18)"}`,
+                  border: `1px solid ${
+                    theme === "dark"
+                      ? "rgba(169,155,255,.34)"
+                      : "rgba(70,55,130,.18)"
+                  }`,
                   borderRadius: 18,
-                  background: theme === "dark" ? "rgba(20, 21, 37, .98)" : "rgba(255,255,255,.98)",
+                  background:
+                    theme === "dark"
+                      ? "rgba(20, 21, 37, .98)"
+                      : "rgba(255,255,255,.98)",
                   color: theme === "dark" ? "#f7f6ff" : "#19182a",
                   boxShadow: "0 24px 70px rgba(0,0,0,.42)",
                   backdropFilter: "blur(18px)",
                   WebkitBackdropFilter: "blur(18px)",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-                  <span style={{ width: 34, height: 34, display: "grid", placeItems: "center", borderRadius: 11, background: "rgba(169,155,255,.17)", color: "#a99bff", fontSize: 18 }} aria-hidden="true">⚙</span>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    marginBottom: 16,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 34,
+                      height: 34,
+                      display: "grid",
+                      placeItems: "center",
+                      borderRadius: 11,
+                      background: "rgba(169,155,255,.17)",
+                      color: "#a99bff",
+                      fontSize: 18,
+                    }}
+                    aria-hidden="true"
+                  >
+                    ⚙
+                  </span>
                   <div>
-                    <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-.02em" }}>Settings</div>
-                    <div style={{ marginTop: 2, fontSize: 12, opacity: .68 }}>Make CampusPass yours</div>
+                    <div
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 800,
+                        letterSpacing: "-.02em",
+                      }}
+                    >
+                      Settings
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 2,
+                        fontSize: 12,
+                        opacity: 0.68,
+                      }}
+                    >
+                      Make CampusPass yours
+                    </div>
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 0", borderTop: `1px solid ${theme === "dark" ? "rgba(255,255,255,.10)" : "rgba(25,24,42,.10)"}`, borderBottom: `1px solid ${theme === "dark" ? "rgba(255,255,255,.10)" : "rgba(25,24,42,.10)"}` }}>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "14px 0",
+                    borderTop: `1px solid ${
+                      theme === "dark"
+                        ? "rgba(255,255,255,.10)"
+                        : "rgba(25,24,42,.10)"
+                    }`,
+                    borderBottom: `1px solid ${
+                      theme === "dark"
+                        ? "rgba(255,255,255,.10)"
+                        : "rgba(25,24,42,.10)"
+                    }`,
+                  }}
+                >
                   <div>
-                    <strong style={{ display: "block", fontSize: 13, fontWeight: 750 }}>Appearance</strong>
-                    <p style={{ margin: "4px 0 0", fontSize: 12, lineHeight: 1.45, opacity: .68 }}>Choose light or dark mode.</p>
+                    <strong
+                      style={{
+                        display: "block",
+                        fontSize: 13,
+                        fontWeight: 750,
+                      }}
+                    >
+                      Appearance
+                    </strong>
+                    <p
+                      style={{
+                        margin: "4px 0 0",
+                        fontSize: 12,
+                        lineHeight: 1.45,
+                        opacity: 0.68,
+                      }}
+                    >
+                      Choose light or dark mode.
+                    </p>
                   </div>
+
                   <button
                     type="button"
                     className="theme-toggle"
                     onClick={toggleTheme}
-                    style={{ flexShrink: 0, padding: "9px 12px", border: "1px solid rgba(169,155,255,.38)", borderRadius: 11, background: "rgba(169,155,255,.15)", color: "inherit", font: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                    style={{
+                      flexShrink: 0,
+                      padding: "9px 12px",
+                      border: "1px solid rgba(169,155,255,.38)",
+                      borderRadius: 11,
+                      background: "rgba(169,155,255,.15)",
+                      color: "inherit",
+                      font: "inherit",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
                   >
                     {theme === "dark" ? "☀ Light" : "☾ Dark"}
                   </button>
                 </div>
+
                 <Link
                   className="settings-link"
                   href="/my-registrations"
                   onClick={() => setSettingsOpen(false)}
-                  style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "11px 9px", borderRadius: 10, color: "inherit", textDecoration: "none", fontSize: 13, fontWeight: 650 }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    marginTop: 10,
+                    padding: "11px 9px",
+                    borderRadius: 10,
+                    color: "inherit",
+                    textDecoration: "none",
+                    fontSize: 13,
+                    fontWeight: 650,
+                  }}
                 >
-                  <span aria-hidden="true">▤</span> My registrations <span style={{ marginLeft: "auto", opacity: .55 }}>↗</span>
+                  <span aria-hidden="true">▤</span>
+                  My registrations
+                  <span style={{ marginLeft: "auto", opacity: 0.55 }}>
+                    ↗
+                  </span>
                 </Link>
+
                 {userEmail ? (
                   <button
                     type="button"
                     className="settings-signout"
                     disabled={signingOut}
-                    onClick={() => { setSettingsOpen(false); void handleSignOut(); }}
-                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", marginTop: 4, padding: "11px 9px", border: "1px solid transparent", borderRadius: 10, background: "transparent", color: theme === "dark" ? "#ffb4bd" : "#b42336", textAlign: "left", font: "inherit", fontSize: 13, fontWeight: 650, cursor: signingOut ? "wait" : "pointer" }}
+                    onClick={() => {
+                      setSettingsOpen(false);
+                      void handleSignOut();
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      width: "100%",
+                      marginTop: 4,
+                      padding: "11px 9px",
+                      border: "1px solid transparent",
+                      borderRadius: 10,
+                      background: "transparent",
+                      color: theme === "dark" ? "#ffb4bd" : "#b42336",
+                      textAlign: "left",
+                      font: "inherit",
+                      fontSize: 13,
+                      fontWeight: 650,
+                      cursor: signingOut ? "wait" : "pointer",
+                    }}
                   >
-                    <span aria-hidden="true">↪</span> {signingOut ? "Signing out..." : "Sign out"}
+                    <span aria-hidden="true">↪</span>
+                    {signingOut ? "Signing out..." : "Sign out"}
                   </button>
                 ) : (
                   <Link
                     className="settings-link"
                     href="/login"
                     onClick={() => setSettingsOpen(false)}
-                    style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, padding: "11px 9px", borderRadius: 10, color: "inherit", textDecoration: "none", fontSize: 13, fontWeight: 650 }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      marginTop: 4,
+                      padding: "11px 9px",
+                      borderRadius: 10,
+                      color: "inherit",
+                      textDecoration: "none",
+                      fontSize: 13,
+                      fontWeight: 650,
+                    }}
                   >
-                    <span aria-hidden="true">↗</span> Sign in / Create account
+                    <span aria-hidden="true">↗</span>
+                    Sign in / Create account
                   </Link>
                 )}
               </div>
             )}
           </div>
+
           {userEmail ? (
-            <div style={{ position: "relative" }}>
+            <div ref={profileContainerRef} style={{ position: "relative" }}>
               <button
                 type="button"
                 onClick={() => setProfileOpen((open) => !open)}
@@ -666,22 +947,19 @@ export default function Home() {
           </h1>
 
           <p className="hero-description">
-            Discover what&apos;s happening around your campus.
-            Find your people, experience something new and
-            never miss a moment.
+            Discover what&apos;s happening around your campus. Find your
+            people, experience something new and never miss a moment.
           </p>
 
           <div className="hero-actions">
             <a className="primary-button" href="#events">
               Explore events <span>↗️</span>
             </a>
-
             <a className="secondary-button" href="#how-it-works">
               How it works
             </a>
           </div>
 
-          {/* Student and Organizer portal entry points */}
           <div
             style={{
               display: "grid",
@@ -707,7 +985,9 @@ export default function Home() {
                 transition: "transform 160ms ease, background 160ms ease",
               }}
             >
-              <span style={{ fontSize: 25 }} aria-hidden="true">🎓</span>
+              <span style={{ fontSize: 25 }} aria-hidden="true">
+                🎓
+              </span>
               <strong style={{ fontSize: 16 }}>Student Portal ↗</strong>
               <span style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.8 }}>
                 Discover events, register, and keep track of your plans.
@@ -729,7 +1009,9 @@ export default function Home() {
                 transition: "transform 160ms ease, background 160ms ease",
               }}
             >
-              <span style={{ fontSize: 25 }} aria-hidden="true">🗓️</span>
+              <span style={{ fontSize: 25 }} aria-hidden="true">
+                🗓️
+              </span>
               <strong style={{ fontSize: 16 }}>Organizer Portal ↗</strong>
               <span style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.8 }}>
                 Submit campus events and manage your event activity.
@@ -869,18 +1151,14 @@ export default function Home() {
                       categoryColors[event.category] ?? "tech"
                     }`}
                   >
-                    <span className="event-category">
-                      {event.category}
-                    </span>
+                    <span className="event-category">{event.category}</span>
                     <span className="event-emoji">
                       {categoryEmojis[event.category] ?? "✳"}
                     </span>
                     <span className="event-art-number">
                       CP / {String(index + 1).padStart(3, "0")}
                     </span>
-                    <span className="event-date">
-                      {formatted.date}
-                    </span>
+                    <span className="event-date">{formatted.date}</span>
                   </div>
 
                   <div className="event-card-body">
@@ -892,14 +1170,19 @@ export default function Home() {
                     <h3>{event.title}</h3>
                     <p className="event-venue">⌖ {event.venue}</p>
                     <p className="event-description">
-                      {event.description ||
-                        "Join us for a campus event."}
+                      {event.description || "Join us for a campus event."}
                     </p>
 
                     <div className="event-card-footer">
                       <div className="event-price">
-                        <span>READY WHEN YOU ARE</span>
-                        <strong>Discover event</strong>
+                        <span>
+                          {isPaidEvent(event) ? "TICKET PRICE" : "ENTRY"}
+                        </span>
+                        <strong>
+                          {isPaidEvent(event)
+                            ? `${formatPrice(event.ticket_price)} / ticket`
+                            : "FREE"}
+                        </strong>
                       </div>
 
                       <button
@@ -934,13 +1217,11 @@ export default function Home() {
             <h3>Discover</h3>
             <p>Find campus events that match your interests.</p>
           </div>
-
           <div className="step-card">
             <span>02</span>
             <h3>Register</h3>
             <p>Save your place at an event with a few clicks.</p>
           </div>
-
           <div className="step-card">
             <span>03</span>
             <h3>Show up</h3>
@@ -954,7 +1235,6 @@ export default function Home() {
           <span className="brand-icon">c.</span>
           campus<span>pass</span>
         </Link>
-
         <p>More campus. More connection. More memories.</p>
         <span>© 2026 CampusPass · A student project</span>
       </footer>
@@ -994,9 +1274,7 @@ export default function Home() {
                 categoryColors[selectedEvent.category] ?? "tech"
               }`}
             >
-              <span>
-                {categoryEmojis[selectedEvent.category] ?? "✳"}
-              </span>
+              <span>{categoryEmojis[selectedEvent.category] ?? "✳"}</span>
             </div>
 
             <div className="section-kicker">
@@ -1006,123 +1284,143 @@ export default function Home() {
             <h2 id="booking-title">{selectedEvent.title}</h2>
 
             <p className="modal-description">
-              {selectedEvent.description ||
-                "Join us for a campus event."}
+              {selectedEvent.description || "Join us for a campus event."}
             </p>
 
             <div className="modal-details">
               <div>
                 <span>DATE</span>
-                <strong>
-                  {formatDate(selectedEvent.starts_at).date}
-                </strong>
+                <strong>{formatDate(selectedEvent.starts_at).date}</strong>
               </div>
-
               <div>
                 <span>TIME</span>
-                <strong>
-                  {formatDate(selectedEvent.starts_at).time}
-                </strong>
+                <strong>{formatDate(selectedEvent.starts_at).time}</strong>
               </div>
-
               <div>
                 <span>VENUE</span>
                 <strong>{selectedEvent.venue}</strong>
               </div>
-
+              <div>
+                <span>ENTRY PRICE</span>
+                <strong>
+                  {isPaidEvent(selectedEvent)
+                    ? `${formatPrice(selectedEvent.ticket_price)} / ticket`
+                    : "FREE"}
+                </strong>
+              </div>
               <div>
                 <span>STATUS</span>
                 <strong>Published</strong>
               </div>
             </div>
 
-            <p>
-              Register to save your place at this campus event.
-            </p>
+            <p>Register to save your place at this campus event.</p>
 
             <div
+              style={{
+                marginTop: 18,
+                padding: 16,
+                borderRadius: 16,
+                border: "1px solid rgba(169,155,255,.3)",
+                background: "rgba(169,155,255,.07)",
+              }}
+            >
+              <div
                 style={{
-                  marginTop: 18,
-                  padding: 16,
-                  borderRadius: 16,
-                  border: "1px solid rgba(169,155,255,.3)",
-                  background: "rgba(169,155,255,.07)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  flexWrap: "wrap",
                 }}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 12,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <div>
-                    <strong style={{ display: "block", fontSize: 15 }}>
-                      Book tickets
-                    </strong>
-                    <span
-                      style={{
-                        display: "block",
-                        marginTop: 4,
-                        fontSize: 12,
-                        opacity: 0.72,
-                      }}
-                    >
-                      Choose how many tickets you need.
-                    </span>
-                  </div>
+                <div>
+                  <strong style={{ display: "block", fontSize: 15 }}>
+                    Book tickets
+                  </strong>
+                  <span
+                    style={{
+                      display: "block",
+                      marginTop: 4,
+                      fontSize: 12,
+                      opacity: 0.72,
+                    }}
+                  >
+                    Choose how many tickets you need.
+                  </span>
+                </div>
 
-                  <label style={{ fontSize: 13, fontWeight: 700 }}>
-                    Number of tickets
-                    <select
-                      aria-label="Number of tickets"
-                      value={ticketQuantity}
-                      disabled={
-                        registering ||
-                        registeredEventIds.includes(selectedEvent.id)
-                      }
-                      onChange={(event) =>
-                        changeTicketQuantity(Number(event.target.value))
-                      }
-                      style={{
-                        display: "block",
-                        marginTop: 6,
-                        minWidth: 110,
-                        padding: "9px 10px",
-                        borderRadius: 10,
-                        border: "1px solid rgba(169,155,255,.4)",
-                        background: theme === "dark" ? "#171725" : "#ffffff",
-                        color: "inherit",
-                      }}
-                    >
-                      {Array.from(
-                        {
-                          length: 5,
-                        },
-                        (_, index) => index + 1
-                      ).map((quantity) => (
+                <label style={{ fontSize: 13, fontWeight: 700 }}>
+                  Number of tickets
+                  <select
+                    aria-label="Number of tickets"
+                    value={ticketQuantity}
+                    disabled={
+                      registering ||
+                      registeredEventIds.includes(selectedEvent.id)
+                    }
+                    onChange={(event) =>
+                      changeTicketQuantity(Number(event.target.value))
+                    }
+                    style={{
+                      display: "block",
+                      marginTop: 6,
+                      minWidth: 110,
+                      padding: "9px 10px",
+                      borderRadius: 10,
+                      border: "1px solid rgba(169,155,255,.4)",
+                      background: theme === "dark" ? "#171725" : "#ffffff",
+                      color: "inherit",
+                    }}
+                  >
+                    {Array.from({ length: 5 }, (_, index) => index + 1).map(
+                      (quantity) => (
                         <option key={quantity} value={quantity}>
                           {quantity} {quantity === 1 ? "ticket" : "tickets"}
                         </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                      )
+                    )}
+                  </select>
+                </label>
+              </div>
 
-                <p
+              {isPaidEvent(selectedEvent) && (
+                <div
                   style={{
-                    margin: "14px 0 0",
-                    fontSize: 12,
-                    lineHeight: 1.6,
-                    opacity: 0.72,
+                    marginTop: 14,
+                    paddingTop: 14,
+                    borderTop: "1px solid rgba(169,155,255,.2)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    alignItems: "center",
                   }}
                 >
-                  Select the total number of tickets you need. No attendee names,
-                  ages, or gender details are required.
-                </p>
-              </div>
+                  <span style={{ fontSize: 13, opacity: 0.78 }}>
+                    Total for {ticketQuantity}{" "}
+                    {ticketQuantity === 1 ? "ticket" : "tickets"}
+                  </span>
+                  <strong style={{ fontSize: 18 }}>
+                    {formatPrice(
+                      Number(selectedEvent.ticket_price) * ticketQuantity
+                    )}
+                  </strong>
+                </div>
+              )}
+
+              <p
+                style={{
+                  margin: "14px 0 0",
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  opacity: 0.72,
+                }}
+              >
+                {isPaidEvent(selectedEvent)
+                  ? "Cashfree Sandbox checkout will open. A booking is confirmed only after server-side payment verification."
+                  : "Select the total number of tickets you need. No attendee names, ages, or gender details are required."}
+              </p>
+            </div>
 
             {registrationMessage && (
               <p
@@ -1145,7 +1443,8 @@ export default function Home() {
               onClick={handleRegister}
               disabled={
                 registering ||
-                (!registrationError &&
+                (!isPaidEvent(selectedEvent) &&
+                  !registrationError &&
                   registeredEventIds.includes(selectedEvent.id))
               }
               style={{
@@ -1154,12 +1453,16 @@ export default function Home() {
               }}
             >
               {registering
-                ? "Registering..."
-                : registeredEventIds.includes(selectedEvent.id)
-                  ? "Registration complete ✓"
-                  : userId
-                    ? "Register for event"
-                    : "Sign in to register"}
+                ? isPaidEvent(selectedEvent)
+                  ? "Opening secure checkout..."
+                  : "Registering..."
+                : isPaidEvent(selectedEvent)
+                  ? `Pay ${formatPrice(
+                      Number(selectedEvent.ticket_price) * ticketQuantity
+                    )}`
+                  : registeredEventIds.includes(selectedEvent.id)
+                    ? "Registration complete ✓"
+                    : "Register for event"}
             </button>
 
             <button

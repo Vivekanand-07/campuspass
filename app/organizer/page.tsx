@@ -12,7 +12,10 @@ type CampusEvent = {
   category: string | null;
   venue: string | null;
   starts_at: string;
+  ends_at: string | null;
   status: string;
+  payment_type: "free" | "paid";
+  ticket_price: number | string;
 };
 
 export default function OrganizerPage() {
@@ -21,27 +24,30 @@ export default function OrganizerPage() {
   const [userId, setUserId] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [checkingAccess, setCheckingAccess] = useState(true);
-
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Workshop");
   const [venue, setVenue] = useState("");
   const [startsAt, setStartsAt] = useState("");
-
+  const [endsAt, setEndsAt] = useState("");
+  const [paymentType, setPaymentType] = useState<"free" | "paid">("free");
+  const [ticketPrice, setTicketPrice] = useState("0");
   const [submitting, setSubmitting] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [events, setEvents] = useState<CampusEvent[]>([]);
-  const [publishingEventId, setPublishingEventId] = useState<string | null>(null);
+  const [publishingEventId, setPublishingEventId] = useState<string | null>(
+    null,
+  );
   const [publishMessage, setPublishMessage] = useState("");
   const [publishErrorMessage, setPublishErrorMessage] = useState("");
 
-  // Use the same saved theme preference as the CampusPass homepage.
   useEffect(() => {
     const applySavedTheme = () => {
       const savedTheme = window.localStorage.getItem("campuspass-theme");
-      document.documentElement.dataset.theme = savedTheme === "light" ? "light" : "dark";
+      document.documentElement.dataset.theme =
+        savedTheme === "light" ? "light" : "dark";
     };
 
     applySavedTheme();
@@ -52,17 +58,15 @@ export default function OrganizerPage() {
   const loadMyEvents = useCallback(async (accountId: string) => {
     const { data, error } = await supabase
       .from("events")
-      .select("id, title, description, category, venue, starts_at, status")
+      .select(
+        "id, title, description, category, venue, starts_at, ends_at, status, payment_type, ticket_price",
+      )
       .eq("organizer_id", accountId)
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Could not load submitted events:", {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
-      });
+      console.error("Could not load submitted events:", error);
+      setErrorMessage(`Could not load your events: ${error.message}`);
       return;
     }
 
@@ -74,7 +78,6 @@ export default function OrganizerPage() {
 
     async function checkAccess() {
       try {
-        // Verify the currently authenticated user with Supabase.
         const {
           data: { user },
           error,
@@ -89,13 +92,9 @@ export default function OrganizerPage() {
 
         setUserId(user.id);
         setUserEmail(user.email ?? "");
-
-        // Any signed-in account can open this dashboard.
         await loadMyEvents(user.id);
 
-        if (active) {
-          setCheckingAccess(false);
-        }
+        if (active) setCheckingAccess(false);
       } catch (error: unknown) {
         console.error("Dashboard access check failed:", error);
 
@@ -103,7 +102,7 @@ export default function OrganizerPage() {
           setErrorMessage(
             error instanceof Error
               ? error.message
-              : "Could not check your account. Please try again."
+              : "Could not check your account. Please try again.",
           );
           setCheckingAccess(false);
         }
@@ -132,37 +131,54 @@ export default function OrganizerPage() {
       return;
     }
 
-    if (!startsAt) {
-      setErrorMessage("Please choose an event date and time.");
+    if (!startsAt || !endsAt) {
+      setErrorMessage("Please choose both event start and end times.");
       return;
     }
 
     const eventDate = new Date(startsAt);
+    const eventEndDate = new Date(endsAt);
 
-    if (Number.isNaN(eventDate.getTime())) {
-      setErrorMessage("Please choose a valid event date and time.");
+    if (
+      Number.isNaN(eventDate.getTime()) ||
+      Number.isNaN(eventEndDate.getTime())
+    ) {
+      setErrorMessage("Please choose valid event dates and times.");
       return;
     }
 
     if (eventDate <= new Date()) {
-      setErrorMessage("Choose a date and time in the future.");
+      setErrorMessage("Choose a start date and time in the future.");
+      return;
+    }
+
+    if (eventEndDate <= eventDate) {
+      setErrorMessage("The event end time must be after its start time.");
+      return;
+    }
+
+    const parsedTicketPrice =
+      paymentType === "paid" ? Number(ticketPrice) : 0;
+
+    if (
+      paymentType === "paid" &&
+      (!Number.isFinite(parsedTicketPrice) ||
+        parsedTicketPrice <= 0 ||
+        parsedTicketPrice > 1000000)
+    ) {
+      setErrorMessage("Enter a ticket price between ₹0.01 and ₹10,00,000.");
       return;
     }
 
     setSubmitting(true);
 
     try {
-      // Always use the authenticated user's actual ID, not a form value.
       const {
         data: { user },
         error: userError,
       } = await supabase.auth.getUser();
 
-      if (userError) {
-        throw new Error(`Could not verify your login: ${userError.message}`);
-      }
-
-      if (!user) {
+      if (userError || !user) {
         setUserId("");
         setErrorMessage("Your session has expired. Please sign in again.");
         router.replace("/login?role=organizer");
@@ -171,46 +187,29 @@ export default function OrganizerPage() {
 
       setUserId(user.id);
 
-      // Do not use .select() here. Pending events may not be visible
-      // through the existing published-events SELECT policy.
       const { error } = await supabase.from("events").insert({
         title: trimmedTitle,
         description: description.trim() || null,
         category,
         venue: trimmedVenue,
         starts_at: eventDate.toISOString(),
+        ends_at: eventEndDate.toISOString(),
         organizer_id: user.id,
         status: "pending",
+        payment_type: paymentType,
+        ticket_price: parsedTicketPrice,
       });
 
       if (error) {
-        console.error("Event submission failed:", {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-          authenticatedUserId: user.id,
-        });
-
-        const errorDetails = [
-          error.message,
-          error.code ? `Code: ${error.code}` : null,
-          error.details ? `Details: ${error.details}` : null,
-          error.hint ? `Hint: ${error.hint}` : null,
-        ]
-          .filter(Boolean)
-          .join(" | ");
-
-        setErrorMessage(
-          `Event submission failed: ${
-            errorDetails || "Unknown database error."
-          }`
-        );
+        console.error("Event submission failed:", error);
+        setErrorMessage(`Event submission failed: ${error.message}`);
         return;
       }
 
       setMessage(
-        "Event submitted successfully! Its status is Pending review."
+        paymentType === "paid"
+          ? "Event submitted for review. Paid checkout is available in Sandbox testing; real payouts require Cashfree merchant activation and payout configuration."
+          : "Event submitted successfully! Its status is Pending review.",
       );
 
       setTitle("");
@@ -218,16 +217,17 @@ export default function OrganizerPage() {
       setCategory("Workshop");
       setVenue("");
       setStartsAt("");
+      setEndsAt("");
+      setPaymentType("free");
+      setTicketPrice("0");
 
-      // Refresh the list after the successful insert.
       await loadMyEvents(user.id);
     } catch (error: unknown) {
       console.error("Unexpected event submission error:", error);
-
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "An unexpected error occurred. Please try again."
+          : "An unexpected error occurred. Please try again.",
       );
     } finally {
       setSubmitting(false);
@@ -242,7 +242,6 @@ export default function OrganizerPage() {
     setPublishingEventId(eventToPublish.id);
 
     try {
-      // Re-check the authenticated user before publishing.
       const {
         data: { user },
         error: userError,
@@ -252,33 +251,37 @@ export default function OrganizerPage() {
         throw new Error("Your session has expired. Please sign in again.");
       }
 
-      // The database policy must also restrict updates to the event owner.
       const { data, error } = await supabase
         .from("events")
         .update({ status: "published" })
         .eq("id", eventToPublish.id)
         .eq("organizer_id", user.id)
         .eq("status", "pending")
-        .select("id, title, description, category, venue, starts_at, status")
+        .select(
+          "id, title, description, category, venue, starts_at, ends_at, status, payment_type, ticket_price",
+        )
         .maybeSingle();
 
       if (error) {
         console.error("Event publishing failed:", error);
         throw new Error(
-          `Could not publish this event: ${error.message}. If this is a permissions error, apply the organizer update policy in Supabase first.`,
+          `Could not publish this event: ${error.message}. Check the events UPDATE policy in Supabase.`,
         );
       }
 
       if (!data) {
         throw new Error(
-          "This event was not published. It may no longer be pending, or your account may not have permission to publish it.",
+          "The event was not published. Check its status and your database permissions.",
         );
       }
 
       setEvents((current) =>
-        current.map((item) => (item.id === data.id ? (data as CampusEvent) : item)),
+        current.map((item) =>
+          item.id === data.id ? (data as CampusEvent) : item,
+        ),
       );
-      setPublishMessage(`🎉 “${data.title}” is now published and eligible to appear on the homepage.`);
+
+      setPublishMessage(`"${data.title}" is now published.`);
     } catch (error: unknown) {
       console.error("Unexpected event publishing error:", error);
       setPublishErrorMessage(
@@ -299,7 +302,6 @@ export default function OrganizerPage() {
       const { error } = await supabase.auth.signOut();
 
       if (error) {
-        console.error("Sign-out failed:", error);
         setErrorMessage(`Sign-out failed: ${error.message}`);
         return;
       }
@@ -310,7 +312,7 @@ export default function OrganizerPage() {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "Could not sign out. Please try again."
+          : "Could not sign out. Please try again.",
       );
     } finally {
       setSigningOut(false);
@@ -320,9 +322,7 @@ export default function OrganizerPage() {
   function formatDate(value: string) {
     const date = new Date(value);
 
-    if (Number.isNaN(date.getTime())) {
-      return "Date to be announced";
-    }
+    if (Number.isNaN(date.getTime())) return "Date to be announced";
 
     return date.toLocaleString("en-IN", {
       day: "numeric",
@@ -356,7 +356,6 @@ export default function OrganizerPage() {
             >
               Browse events
             </Link>
-
             <button
               type="button"
               onClick={handleSignOut}
@@ -373,37 +372,26 @@ export default function OrganizerPage() {
         <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-400">
           CampusPass Organizer
         </p>
-
         <h1 className="mt-2 text-3xl font-black sm:text-5xl">
           Organizer Dashboard
         </h1>
-
         <p className="mt-3 text-slate-400">
           Submit campus events and keep track of your submissions.
         </p>
-
-        {userEmail && (
-          <p className="mt-2 text-sm text-slate-500">{userEmail}</p>
-        )}
+        {userEmail && <p className="mt-2 text-sm text-slate-500">{userEmail}</p>}
 
         <div className="mt-10 grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
           <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-6 sm:p-8">
             <h2 className="text-2xl font-bold">Create an event</h2>
-
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              Complete the details below. New events are submitted as pending
-              for review and are not immediately published.
+              New events are submitted as pending for review.
             </p>
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-5">
               <div>
-                <label
-                  htmlFor="event-title"
-                  className="mb-2 block text-sm font-semibold"
-                >
+                <label htmlFor="event-title" className="mb-2 block text-sm font-semibold">
                   Event title *
                 </label>
-
                 <input
                   id="event-title"
                   required
@@ -416,13 +404,9 @@ export default function OrganizerPage() {
               </div>
 
               <div>
-                <label
-                  htmlFor="event-description"
-                  className="mb-2 block text-sm font-semibold"
-                >
+                <label htmlFor="event-description" className="mb-2 block text-sm font-semibold">
                   Description
                 </label>
-
                 <textarea
                   id="event-description"
                   rows={4}
@@ -435,13 +419,9 @@ export default function OrganizerPage() {
               </div>
 
               <div>
-                <label
-                  htmlFor="event-category"
-                  className="mb-2 block text-sm font-semibold"
-                >
+                <label htmlFor="event-category" className="mb-2 block text-sm font-semibold">
                   Category *
                 </label>
-
                 <select
                   id="event-category"
                   required
@@ -460,13 +440,53 @@ export default function OrganizerPage() {
               </div>
 
               <div>
-                <label
-                  htmlFor="event-venue"
-                  className="mb-2 block text-sm font-semibold"
+                <label htmlFor="event-payment-type" className="mb-2 block text-sm font-semibold">
+                  Ticket type *
+                </label>
+                <select
+                  id="event-payment-type"
+                  required
+                  value={paymentType}
+                  onChange={(e) => {
+                    const nextType = e.target.value as "free" | "paid";
+                    setPaymentType(nextType);
+                    if (nextType === "free") setTicketPrice("0");
+                    else if (ticketPrice === "0") setTicketPrice("");
+                  }}
+                  className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-3 outline-none focus:border-cyan-400"
                 >
+                  <option value="free">Free event</option>
+                  <option value="paid">Paid event</option>
+                </select>
+              </div>
+
+              {paymentType === "paid" && (
+                <div>
+                  <label htmlFor="event-ticket-price" className="mb-2 block text-sm font-semibold">
+                    Ticket price (₹) *
+                  </label>
+                  <input
+                    id="event-ticket-price"
+                    type="number"
+                    required
+                    min="0.01"
+                    max="1000000"
+                    step="0.01"
+                    value={ticketPrice}
+                    onChange={(e) => setTicketPrice(e.target.value)}
+                    placeholder="e.g. 199"
+                    className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-3 outline-none focus:border-cyan-400"
+                  />
+                  <p className="mt-2 rounded-lg border border-amber-400/25 bg-amber-400/10 p-3 text-xs leading-5 text-amber-200">
+                    Sandbox payments are for testing only. Real payments and organizer payouts require an activated Cashfree merchant account and payout setup.
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <label htmlFor="event-venue" className="mb-2 block text-sm font-semibold">
                   Venue *
                 </label>
-
                 <input
                   id="event-venue"
                   required
@@ -479,15 +499,11 @@ export default function OrganizerPage() {
               </div>
 
               <div>
-                <label
-                  htmlFor="event-date"
-                  className="mb-2 block text-sm font-semibold"
-                >
-                  Date and time *
+                <label htmlFor="event-start-date" className="mb-2 block text-sm font-semibold">
+                  Start date and time *
                 </label>
-
                 <input
-                  id="event-date"
+                  id="event-start-date"
                   type="datetime-local"
                   required
                   value={startsAt}
@@ -496,20 +512,28 @@ export default function OrganizerPage() {
                 />
               </div>
 
+              <div>
+                <label htmlFor="event-end-date" className="mb-2 block text-sm font-semibold">
+                  End date and time *
+                </label>
+                <input
+                  id="event-end-date"
+                  type="datetime-local"
+                  required
+                  min={startsAt || undefined}
+                  value={endsAt}
+                  onChange={(e) => setEndsAt(e.target.value)}
+                  className="w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-3 outline-none focus:border-cyan-400"
+                />
+              </div>
+
               {message && (
-                <p
-                  role="status"
-                  className="break-words rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-200"
-                >
+                <p role="status" className="break-words rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-200">
                   {message}
                 </p>
               )}
-
               {errorMessage && (
-                <p
-                  role="alert"
-                  className="break-words rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm leading-6 text-red-200"
-                >
+                <p role="alert" className="break-words rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm leading-6 text-red-200">
                   {errorMessage}
                 </p>
               )}
@@ -526,19 +550,12 @@ export default function OrganizerPage() {
 
           <section>
             {publishMessage && (
-              <p
-                role="status"
-                className="mb-4 break-words rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-200"
-              >
+              <p role="status" className="mb-4 break-words rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-4 text-sm text-emerald-200">
                 {publishMessage}
               </p>
             )}
-
             {publishErrorMessage && (
-              <p
-                role="alert"
-                className="mb-4 break-words rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm leading-6 text-red-200"
-              >
+              <p role="alert" className="mb-4 break-words rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm leading-6 text-red-200">
                 {publishErrorMessage}
               </p>
             )}
@@ -546,11 +563,8 @@ export default function OrganizerPage() {
             <div className="mb-5 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-2xl font-bold">Your submissions</h2>
-                <p className="mt-1 text-sm text-slate-400">
-                  Events created by your account.
-                </p>
+                <p className="mt-1 text-sm text-slate-400">Events created by your account.</p>
               </div>
-
               <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-sm font-semibold text-cyan-300">
                 {events.length}
               </span>
@@ -558,26 +572,17 @@ export default function OrganizerPage() {
 
             {events.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-white/15 p-8 text-center">
-                <p className="text-lg font-semibold">
-                  No submissions to show
-                </p>
-
+                <p className="text-lg font-semibold">No submissions to show</p>
                 <p className="mt-2 text-sm leading-6 text-slate-400">
-                  Submit your first event using the form. If previously
-                  submitted events are missing, database read permissions may
-                  need to be checked.
+                  Submit your first event using the form. If events are missing, check the database read policy.
                 </p>
               </div>
             ) : (
               <div className="space-y-4">
                 {events.map((event) => (
-                  <article
-                    key={event.id}
-                    className="rounded-2xl border border-white/10 bg-white/[0.04] p-5"
-                  >
+                  <article key={event.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <h3 className="text-lg font-bold">{event.title}</h3>
-
                       <span className="rounded-full bg-amber-400/10 px-3 py-1 text-xs font-semibold capitalize text-amber-300">
                         {event.status}
                       </span>
@@ -589,8 +594,14 @@ export default function OrganizerPage() {
 
                     <div className="mt-4 space-y-2 text-sm text-slate-300">
                       <p>📂 {event.category || "Campus event"}</p>
+                      <p>
+                        🎟️ {event.payment_type === "paid"
+                          ? `₹${Number(event.ticket_price).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per ticket`
+                          : "Free event"}
+                      </p>
                       <p>📍 {event.venue || "Venue to be announced"}</p>
-                      <p>📅 {formatDate(event.starts_at)}</p>
+                      <p>🟢 Starts: {formatDate(event.starts_at)}</p>
+                      <p>🔴 Ends: {event.ends_at ? formatDate(event.ends_at) : "End time not set"}</p>
                     </div>
 
                     {event.status === "pending" && (
@@ -600,9 +611,7 @@ export default function OrganizerPage() {
                         disabled={publishingEventId !== null}
                         className="mt-5 w-full rounded-xl bg-emerald-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {publishingEventId === event.id
-                          ? "Publishing..."
-                          : "Publish event"}
+                        {publishingEventId === event.id ? "Publishing..." : "Publish event"}
                       </button>
                     )}
 
@@ -618,6 +627,7 @@ export default function OrganizerPage() {
           </section>
         </div>
       </section>
+
       <style jsx global>{`
         html[data-theme="light"] .organizer-shell {
           background: #f7f6fc !important;
@@ -632,13 +642,13 @@ export default function OrganizerPage() {
         html[data-theme="light"] .organizer-shell .text-slate-500 {
           color: #625d70 !important;
         }
-        html[data-theme="light"] .organizer-shell .border-white\/10,
-        html[data-theme="light"] .organizer-shell .border-white\/15 {
+        html[data-theme="light"] .organizer-shell .border-white\\/10,
+        html[data-theme="light"] .organizer-shell .border-white\\/15 {
           border-color: #e2dced !important;
         }
-        html[data-theme="light"] .organizer-shell .bg-white\/\[0\.04\],
-        html[data-theme="light"] .organizer-shell .bg-white\/5,
-        html[data-theme="light"] .organizer-shell .bg-white\/10 {
+        html[data-theme="light"] .organizer-shell .bg-white\\/\$begin:math:display$0\\\\\.04\\$end:math:display$,
+        html[data-theme="light"] .organizer-shell .bg-white\\/5,
+        html[data-theme="light"] .organizer-shell .bg-white\\/10 {
           background-color: #ffffff !important;
         }
         html[data-theme="light"] .organizer-shell input,
@@ -652,7 +662,7 @@ export default function OrganizerPage() {
         html[data-theme="light"] .organizer-shell textarea::placeholder {
           color: #827b90 !important;
         }
-        html[data-theme="light"] .organizer-shell .hover\:bg-white\/10:hover {
+        html[data-theme="light"] .organizer-shell .hover\\:bg-white\\/10:hover {
           background-color: #f0ecfa !important;
         }
         html[data-theme="light"] .organizer-shell .text-cyan-400 {

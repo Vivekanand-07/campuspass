@@ -178,6 +178,27 @@ export default function MyRegistrationsPage() {
     setTicketToPrint(ticketId);
   }
 
+  // Remove tickets shortly after their event end time, even if this page
+  // stays open. This only updates the page; it does not delete database rows.
+  useEffect(() => {
+    const removeExpiredTickets = () => {
+      const now = Date.now();
+      setEvents((currentEvents) =>
+        currentEvents.filter((ticket) => {
+          // New events use ends_at. The starts_at fallback is only for older
+          // event records that were created before end times were available.
+          const expiryTime = ticket.ends_at
+            ? new Date(ticket.ends_at).getTime()
+            : new Date(ticket.starts_at).getTime();
+          return Number.isFinite(expiryTime) && expiryTime > now;
+        })
+      );
+    };
+
+    const intervalId = window.setInterval(removeExpiredTickets, 5000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   useEffect(() => {
     if (!ticketToPrint) return;
 
@@ -321,7 +342,10 @@ export default function MyRegistrationsPage() {
                     </p>
 
                     <div className="mt-5 space-y-3 break-words text-sm text-slate-700 print:text-black">
-                      <p><span className="mr-2">📅</span>{formatDate(event.starts_at)}</p>
+                      <p><span className="mr-2">📅</span>Starts: {formatDate(event.starts_at)}</p>
+                      {event.ends_at && (
+                        <p><span className="mr-2">⏰</span>Ends: {formatDate(event.ends_at)}</p>
+                      )}
                       <p><span className="mr-2">📍</span>{event.venue || "Venue to be announced"}</p>
                     </div>
 
